@@ -97,6 +97,35 @@ async def clear_cache_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error limpiando caché: {str(e)}")
 
+@app.get("/debug/test-query")
+async def test_query(table: str = "clientes", question: str = "¿Cuántos registros hay?"):
+    """
+    Endpoint de prueba para verificar consultas directas a una tabla.
+    """
+    from sources.assistant import generate_query, execute_query
+    from sources.table_info import get_table_info, get_table_sample
+    
+    try:
+        # Obtener info de la tabla
+        table_info = get_table_info(table)
+        table_sample = get_table_sample(table, limit=10)
+        
+        # Generar query
+        query = generate_query(table, question, table_info, table_sample)
+        
+        # Ejecutar query
+        result = execute_query(query, table)
+        
+        return {
+            "table": table,
+            "question": question,
+            "query_generated": query,
+            "result": result,
+            "table_structure": table_info
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en test: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

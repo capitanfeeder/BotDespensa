@@ -21,8 +21,8 @@ llm = OllamaLLM(model="gemma3:1b", temperature=0.3)
 
 def detect_relevant_table(question: str) -> str:
     """
-    Detecta qué tabla es relevante para la pregunta del usuario.
-    Por ahora retorna una tabla por defecto, pero puede ser mejorado con IA.
+    Detecta qué tabla es relevante para la pregunta del usuario analizando
+    la estructura completa de la base de datos con IA.
     
     Args:
         question: Pregunta del usuario
@@ -30,34 +30,73 @@ def detect_relevant_table(question: str) -> str:
     Returns:
         Nombre de la tabla relevante
     """
-    # Obtener lista de todas las tablas
-    all_tables = get_all_tables_list()
+    from sources.table_info import get_db_info
     
-    if not all_tables:
-        raise Exception("No se encontraron tablas en la base de datos")
+    # Obtener estructura completa de la BD con columnas
+    db_info = get_db_info()
     
-    # Lógica simple: buscar palabras clave en la pregunta
-    question_lower = question.lower()
+    if not db_info:
+        raise Exception("No se pudo obtener información de la base de datos")
     
-    # Mapeo de palabras clave a tablas (personalizar según tu BD)
-    keyword_table_map = {
-        'producto': 'productos',
-        'marca': 'marcas',
-        'categoria': 'categorias',
-        'inventario': 'inventario',
-        'stock': 'productos',
-        'despensa': 'productos'
-    }
+    # Si solo hay una tabla, usarla directamente
+    if len(db_info) == 1:
+        table_name = list(db_info.keys())[0]
+        print(f"✅ Solo hay una tabla: {table_name}")
+        return table_name
     
-    # Buscar coincidencias
-    for keyword, table in keyword_table_map.items():
-        if keyword in question_lower and table in all_tables:
-            print(f"🎯 Tabla detectada por palabra clave '{keyword}': {table}")
-            return table
+    # Construir descripción de tablas con sus columnas
+    tables_description = []
+    for table_name, info in db_info.items():
+        columns = info.get('columns', [])
+        column_names = [col[0] for col in columns]
+        tables_description.append(f"- {table_name}: columnas({', '.join(column_names)})")
     
-    # Si no encuentra coincidencia, usar la primera tabla disponible
-    print(f"⚠️ No se detectó tabla específica, usando: {all_tables[0]}")
-    return all_tables[0]
+    tables_text = '\n'.join(tables_description)
+    
+    print(f"📊 Analizando estructura completa de BD...")
+    
+    # Usar el LLM con contexto completo de la estructura
+    prompt = f"""Pregunta del usuario: "{question}"
+
+Estructura de la base de datos:
+{tables_text}
+
+Analiza la pregunta y determina qué tabla es la más relevante basándote en:
+1. Las palabras en la pregunta (cliente, producto, marca, etc.)
+2. Los nombres de las columnas en cada tabla
+3. El contexto de lo que se pregunta
+
+Responde SOLO con el nombre exacto de UNA tabla de la lista, sin puntos, comillas ni explicaciones.
+
+Nombre de la tabla:"""
+
+    try:
+        response = llm.invoke(prompt).strip()
+        
+        # Limpiar la respuesta
+        response = response.replace('"', '').replace("'", '').replace('.', '').replace(':', '').strip()
+        
+        # Buscar coincidencia exacta
+        if response in db_info:
+            print(f"🎯 Tabla detectada: {response}")
+            return response
+        
+        # Buscar coincidencia parcial (case-insensitive)
+        response_lower = response.lower()
+        for table_name in db_info.keys():
+            if table_name.lower() == response_lower:
+                print(f"🎯 Tabla detectada: {table_name}")
+                return table_name
+        
+        # Si no encuentra coincidencia, usar la primera tabla
+        first_table = list(db_info.keys())[0]
+        print(f"⚠️ No se detectó tabla clara, usando: {first_table}")
+        return first_table
+        
+    except Exception as e:
+        first_table = list(db_info.keys())[0]
+        print(f"⚠️ Error detectando tabla: {e}, usando: {first_table}")
+        return first_table
 
 
 def generate_query(table_name: str, question: str, table_info: dict, table_sample: dict = None) -> str:
