@@ -17,146 +17,60 @@ from sources.table_info import get_table_info, get_table_sample, extract_column_
 load_dotenv('cred.env')
 
 # Cliente LLM global
-llm = OllamaLLM(model="gemma3:1b", temperature=0.3)
+llm = OllamaLLM(model="qwen3:4b", temperature=0.3)
 
-def detect_relevant_table(question: str) -> str:
+def generate_query(question: str, db_structure: dict) -> str:
     """
-    Detecta qué tabla es relevante para la pregunta del usuario analizando
-    la estructura completa de la base de datos con IA.
+    Genera una consulta SQL que responde a una pregunta usando toda la estructura de la BD.
+    El modelo decide qué tabla(s) usar basándose en el contexto completo.
     
     Args:
         question: Pregunta del usuario
-        
-    Returns:
-        Nombre de la tabla relevante
-    """
-    from sources.table_info import get_db_info
-    
-    # Obtener estructura completa de la BD con columnas
-    db_info = get_db_info()
-    
-    if not db_info:
-        raise Exception("No se pudo obtener información de la base de datos")
-    
-    # Si solo hay una tabla, usarla directamente
-    if len(db_info) == 1:
-        table_name = list(db_info.keys())[0]
-        print(f"✅ Solo hay una tabla: {table_name}")
-        return table_name
-    
-    # Construir descripción de tablas con sus columnas
-    tables_description = []
-    for table_name, info in db_info.items():
-        columns = info.get('columns', [])
-        column_names = [col[0] for col in columns]
-        tables_description.append(f"- {table_name}: columnas({', '.join(column_names)})")
-    
-    tables_text = '\n'.join(tables_description)
-    
-    print(f"📊 Analizando estructura completa de BD...")
-    
-    # Usar el LLM con contexto completo de la estructura
-    prompt = f"""Pregunta del usuario: "{question}"
-
-Estructura de la base de datos:
-{tables_text}
-
-Analiza la pregunta y determina qué tabla es la más relevante basándote en:
-1. Las palabras en la pregunta (cliente, producto, marca, etc.)
-2. Los nombres de las columnas en cada tabla
-3. El contexto de lo que se pregunta
-
-Responde SOLO con el nombre exacto de UNA tabla de la lista, sin puntos, comillas ni explicaciones.
-
-Nombre de la tabla:"""
-
-    try:
-        response = llm.invoke(prompt).strip()
-        
-        # Limpiar la respuesta
-        response = response.replace('"', '').replace("'", '').replace('.', '').replace(':', '').strip()
-        
-        # Buscar coincidencia exacta
-        if response in db_info:
-            print(f"🎯 Tabla detectada: {response}")
-            return response
-        
-        # Buscar coincidencia parcial (case-insensitive)
-        response_lower = response.lower()
-        for table_name in db_info.keys():
-            if table_name.lower() == response_lower:
-                print(f"🎯 Tabla detectada: {table_name}")
-                return table_name
-        
-        # Si no encuentra coincidencia, usar la primera tabla
-        first_table = list(db_info.keys())[0]
-        print(f"⚠️ No se detectó tabla clara, usando: {first_table}")
-        return first_table
-        
-    except Exception as e:
-        first_table = list(db_info.keys())[0]
-        print(f"⚠️ Error detectando tabla: {e}, usando: {first_table}")
-        return first_table
-
-
-def generate_query(table_name: str, question: str, table_info: dict, table_sample: dict = None) -> str:
-    """
-    Genera una consulta SQL que responde a una pregunta relacionada con la tabla especificada.
-    
-    Args:
-        table_name: Nombre de la tabla
-        question: Pregunta del usuario
-        table_info: Información de la estructura de la tabla
-        table_sample: Muestra de datos de la tabla (opcional)
+        db_structure: Estructura completa de la base de datos con todas las tablas y columnas
         
     Returns:
         Consulta SQL generada
     """
-    # Obtener las columnas de la tabla
-    columns = table_info.get('columns', [])
-    columns_str = ', '.join([f"{col[0]} ({col[1]})" for col in columns])
-    column_names = [col[0] for col in columns]
+    # Construir descripción completa de la BD
+    db_description = []
+    for table_name, table_info in db_structure.items():
+        columns = table_info.get('columns', [])
+        columns_str = ', '.join([f"`{col[0]}` ({col[1]})" for col in columns])
+        db_description.append(f"Tabla `{table_name}`:\n  Columnas: {columns_str}")
     
-    # Crear contexto de ejemplo si hay muestra de datos
-    sample_context = ""
-    if table_sample and table_name in table_sample:
-        sample_context = "\nEjemplos de valores en las columnas:\n"
-        for col_name, values in table_sample[table_name].items():
-            if values:
-                sample_context += f"  - {col_name}: {', '.join(values[:5])}\n"
+    db_text = '\n\n'.join(db_description)
     
     # Crear el prompt para generar SQL
     prompt = f"""Genera UNA consulta SQL para MySQL que responda esta pregunta: {question}
 
-Tabla: {table_name}
-Columnas disponibles:
-{columns_str}
-{sample_context}
+ESTRUCTURA COMPLETA DE LA BASE DE DATOS:
+{db_text}
 
 REGLAS CRÍTICAS:
 1. Escribe SOLO la consulta SQL, sin bloques markdown (sin ```sql o ```)
-2. NUNCA uses columnas ID con valores de texto
-3. Para buscar por nombre/texto, usa columnas que contengan 'nombre' en su nombre
-4. Los IDs (id_*) son SIEMPRE numéricos
-5. Usa LIKE '%valor%' para búsquedas de texto
-6. Usa backticks (`) para nombres de tablas y columnas en MySQL
-7. NO incluyas LIMIT, se agregará automáticamente
-8. Revisa las columnas disponibles antes de usarlas
+2. Elige automáticamente la tabla más relevante según la pregunta
+3. NUNCA uses columnas ID con valores de texto
+4. Para buscar por nombre/texto, usa columnas que contengan 'nombre' en su nombre
+5. Los IDs (id_*) son SIEMPRE numéricos
+6. Usa LIKE '%valor%' para búsquedas de texto
+7. Usa backticks (`) para nombres de tablas y columnas en MySQL
+8. NO incluyas LIMIT, se agregará automáticamente
+9. Si necesitas JOIN entre tablas, hazlo usando las columnas ID apropiadas
+10. Revisa las columnas disponibles antes de usarlas
 
 Ejemplos correctos:
-- "cuántos productos": SELECT COUNT(*) as total FROM `{table_name}`
-- "productos de Pepsi": SELECT * FROM `{table_name}` WHERE `nombre_marca` LIKE '%Pepsi%'
-- "categorías": SELECT DISTINCT `nombre_categoria` FROM `{table_name}`
-
-Columnas disponibles: {', '.join([f'`{col}`' for col in column_names])}
+- "cuántos productos": SELECT COUNT(*) as total FROM `productos`
+- "productos de Pepsi": SELECT * FROM `productos` WHERE `nombre_marca` LIKE '%Pepsi%'
+- "clientes de Madrid": SELECT * FROM `clientes` WHERE `ciudad` LIKE '%Madrid%'
 
 Genera SOLO la consulta SQL:"""
 
     try:
         response = llm.invoke(prompt)
         
-        # Limpiar la respuesta de markdown y espacios
+        # Limpiar la respuesta de markdown, espacios y tags <think>
         query = response.strip()
+        query = QueryOptimizer.remove_think_tags(query)
         query = QueryOptimizer.fix_markdown_artifacts(query)
         
         # Eliminar comillas simples alrededor del resultado si existen
@@ -174,14 +88,13 @@ Genera SOLO la consulta SQL:"""
         raise Exception(f"Error generando consulta: {e}")
 
 
-def execute_query(query: str, table_name: str = None) -> str:
+def execute_query(query: str) -> str:
     """
     Ejecuta una consulta SQL y devuelve el resultado en formato JSON.
     Incluye optimización automática y manejo inteligente de errores.
     
     Args:
         query: Consulta SQL a ejecutar
-        table_name: Nombre de la tabla (opcional)
         
     Returns:
         Resultado de la consulta en formato JSON
@@ -194,7 +107,7 @@ def execute_query(query: str, table_name: str = None) -> str:
 
     # Optimizar consulta antes de ejecutar
     try:
-        optimized_query, warnings = QueryOptimizer.validate_and_enhance_query(query, table_name or "")
+        optimized_query, warnings = QueryOptimizer.validate_and_enhance_query(query, "")
         if warnings:
             print(f"⚠️ Advertencias: {warnings}")
     except Exception as e:
@@ -237,7 +150,7 @@ def execute_query(query: str, table_name: str = None) -> str:
                 if diagnosis["error_type"] == "markdown_artifacts":
                     fixed_query = QueryOptimizer.fix_markdown_artifacts(query)
                     if fixed_query != query:
-                        return execute_query(fixed_query, table_name)
+                        return execute_query(fixed_query)
             except Exception:
                 pass
         
@@ -313,7 +226,9 @@ Responde SOLO con la información, sin frases de relleno:"""
 
     try:
         response = llm.invoke(prompt)
-        # Limpiar respuesta de posibles frases innecesarias
+        
+        # Limpiar respuesta de tags <think> y posibles frases innecesarias
+        response = QueryOptimizer.remove_think_tags(response)
         response = response.strip()
         
         # Remover frases comunes no deseadas
@@ -340,7 +255,7 @@ Responde SOLO con la información, sin frases de relleno:"""
 def process_question(question: str) -> dict:
     """
     Procesa una pregunta del usuario y devuelve la respuesta.
-    Detecta automáticamente la tabla relevante y obtiene su estructura.
+    Pasa toda la estructura de la BD al modelo para que genere la query apropiada.
     
     Args:
         question: Pregunta del usuario
@@ -354,26 +269,20 @@ def process_question(question: str) -> dict:
         
         print(f"❓ Procesando pregunta: {question}")
         
-        # Detectar tabla relevante
-        table_name = detect_relevant_table(question)
-        print(f"📊 Tabla detectada: {table_name}")
+        # Obtener estructura COMPLETA de la base de datos
+        from sources.table_info import get_db_info
+        db_structure = get_db_info()
         
-        # Obtener estructura de la tabla desde la BD (con caché)
-        table_info = get_table_info(table_name)
-        print(f"✅ Estructura obtenida: {len(table_info.get('columns', []))} columnas")
+        if not db_structure:
+            return {"answer": "No se pudo acceder a la estructura de la base de datos"}
         
-        # Obtener muestra de datos (opcional, con caché)
-        try:
-            table_sample = get_table_sample(table_name, limit=50)
-        except Exception as e:
-            print(f"⚠️ No se pudo obtener muestra: {e}")
-            table_sample = None
+        print(f"📊 Estructura BD obtenida: {len(db_structure)} tabla(s)")
         
-        # Generar consulta SQL con contexto completo
-        query = generate_query(table_name, question, table_info, table_sample)
+        # Generar consulta SQL pasando toda la estructura
+        query = generate_query(question, db_structure)
         
         # Ejecutar consulta
-        result = execute_query(query, table_name)
+        result = execute_query(query)
         
         # Transformar respuesta
         response = transform_response(question, result)

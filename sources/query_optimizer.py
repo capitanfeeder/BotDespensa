@@ -5,10 +5,32 @@ class QueryOptimizer:
     """Optimiza consultas SQL para MySQL"""
     
     @staticmethod
+    def remove_think_tags(text: str) -> str:
+        """
+        Remueve todo el contenido entre <think> y </think> que genera el modelo qwen3:4b.
+        
+        Args:
+            text: Texto que puede contener tags de pensamiento
+            
+        Returns:
+            Texto limpio sin los tags de pensamiento
+        """
+        # Remover todo entre <think> y </think> (incluyendo los tags)
+        cleaned_text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Limpiar espacios extra que puedan quedar
+        cleaned_text = ' '.join(cleaned_text.split())
+        
+        return cleaned_text.strip()
+    
+    @staticmethod
     def fix_markdown_artifacts(query: str) -> str:
         """
         Remueve artefactos de markdown de las consultas generadas por IA.
         """
+        # Primero remover tags de pensamiento
+        query = QueryOptimizer.remove_think_tags(query)
+        
         # Remover bloques de código markdown
         query = re.sub(r'```\w*\n?', '', query)
         query = re.sub(r'\n?```', '', query)

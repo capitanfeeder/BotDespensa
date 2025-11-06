@@ -98,30 +98,28 @@ async def clear_cache_endpoint():
         raise HTTPException(status_code=500, detail=f"Error limpiando caché: {str(e)}")
 
 @app.get("/debug/test-query")
-async def test_query(table: str = "clientes", question: str = "¿Cuántos registros hay?"):
+async def test_query(question: str = "¿Cuántos registros hay?"):
     """
-    Endpoint de prueba para verificar consultas directas a una tabla.
+    Endpoint de prueba para verificar consultas directas.
     """
     from sources.assistant import generate_query, execute_query
-    from sources.table_info import get_table_info, get_table_sample
+    from sources.table_info import get_db_info
     
     try:
-        # Obtener info de la tabla
-        table_info = get_table_info(table)
-        table_sample = get_table_sample(table, limit=10)
+        # Obtener estructura completa de la BD
+        db_structure = get_db_info()
         
         # Generar query
-        query = generate_query(table, question, table_info, table_sample)
+        query = generate_query(question, db_structure)
         
         # Ejecutar query
-        result = execute_query(query, table)
+        result = execute_query(query)
         
         return {
-            "table": table,
             "question": question,
             "query_generated": query,
             "result": result,
-            "table_structure": table_info
+            "database_structure": db_structure
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en test: {str(e)}")
