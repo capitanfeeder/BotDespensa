@@ -16,8 +16,11 @@ from sources.table_info import get_table_info, get_table_sample, extract_column_
 # Cargar las variables de entorno
 load_dotenv('cred.env')
 
+qwen = "qwen3:1.7b"
+#qwen = "qwen3-coder:480b-cloud"
+
 # Cliente LLM global
-llm = OllamaLLM(model="qwen3:4b", temperature=0.3)
+llm = OllamaLLM(model=qwen, temperature=0.5)
 
 def generate_query(question: str, db_structure: dict) -> str:
     """
