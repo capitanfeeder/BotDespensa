@@ -191,8 +191,8 @@ def transform_response(question: str, result_json: str) -> dict:
 
     # Verificar si hay errores
     if "error" in result_dict:
-        return {"answer": f"Lo siento, hubo un error: {result_dict['error']}"}
-    
+        return {"answer": "Lo siento, creo que tuve problemas resolviendo tu consulta. ¿Podrías reformularla?"}
+
     # Si el resultado está vacío
     if not result_dict or (isinstance(result_dict, list) and len(result_dict) == 0):
         return {"answer": "No encontré resultados para tu consulta. ¿Quieres que busque algo diferente?"}
